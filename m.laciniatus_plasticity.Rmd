@@ -1,0 +1,3036 @@
+---
+title: "M. laciniatus leaf lobing plasticity in response to day length variation"
+author: "Jill Syrotchen"
+date: "12/20/2021"
+output: html_document
+---
+
+#Working directory
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+setwd("~/Dropbox/Tulane/Research/High:low light plasticity/Data analysis")
+```
+
+#Loading packages
+```{r packages}
+library("tidyverse")
+library("ggpubr")
+library("magrittr")
+library("knitr")
+library("doBy")
+library("plyr")
+
+library("lme4")
+library("nlme")
+
+library("gmodels")
+library("broom")
+library("foreach")
+library("plotrix")
+library("multcomp")
+library("corrplot")
+
+library("ggmap")
+register_google(key = "AIzaSyBXIJknr6_3qbjwLrHuwLxSX1IHjn-M7zw", write = TRUE)
+```
+#Loading data
+```{r data}
+#situate the full dataset
+full_dataset<-read_csv("./Data/finaldata3.0.csv")
+full_dataset <- full_dataset[ !(full_dataset$Population %in% c("QAL", "SNB2", "TIGR", "WUV", "CECL")), ] #removes pops w/ < 3 lines
+full_dataset$log_lobing = log1p(full_dataset$`Leaf lobing index`) #takes log of leaf lobing column
+full_dataset$comb <- paste(full_dataset$Population, full_dataset$Line, sep = "")
+full_dataset$comb_ <- paste(full_dataset$Population, full_dataset$Line, sep = "_")
+full_dataset$Plant_height <- full_dataset$`Plant Height (mm)`
+full_dataset$Day_length <- full_dataset$`Day length`
+full_dataset$popdaylength <- paste(full_dataset$Population, full_dataset$Day_length, sep = "")
+full_dataset$popdaylength <- as.factor(full_dataset$popdaylength)
+full_dataset$linedaylength <- paste(full_dataset$comb, full_dataset$Day_length, sep = "")
+full_dataset$linedaylength <- as.factor(full_dataset$linedaylength)
+
+#KGF Davis dataset
+KGFleaf_dataset <- read_csv("./Data/LeafShapeAnalysisKGF.csv")
+KGFfull_dataset <- read_csv("./Data/LeafShapeGrowout_Flowering2KGF.csv")
+KGFfull_dataset$Elevation_m <- KGFfull_dataset$Elevation*0.3048
+KGFleaf_dataset$Elevation_m <- KGFleaf_dataset$Elevation*0.3048
+KGFleaf_dataset$comb <- paste(KGFleaf_dataset$Population, KGFleaf_dataset$Genotype, sep = "")
+KGFfull_dataset$comb <- paste(KGFfull_dataset$Population, KGFfull_dataset$Genotype, sep = "")
+combined_kgf <- merge(KGFleaf_dataset, KGFfull_dataset, by = "comb")
+
+
+allpops <- c("BCL", "BML", "DNK", "GB", "HEH", "HHR", "HUL", "LIB", "OPN", "PETL", "SBL", "SHL", "TRT", "WCL", "WLF", "YCN")
+
+clines<-read_csv("./Data/cline.csv")
+full_dataset <- merge(full_dataset, clines, by = "Population")
+
+#make population and line a factor instead of a number
+full_dataset$Population <- as.factor(full_dataset$Population)
+full_dataset$Line <- as.factor(full_dataset$Line)
+full_dataset$comb <- as.factor(full_dataset$comb)
+full_dataset$Day_length <- as.factor(full_dataset$Day_length)
+
+#situate the elevation data file
+elevdata<-read_csv("./Data/elevdata.csv")
+elevdata <- elevdata[ !(elevdata$Population %in% c("ST", "QAL", "SNB2", "TIGR", "WUV", "CECL")), ] #removes ST pop, pops w/ < 3 lines
+elevdata$`Elevation (m)` <- as.numeric(elevdata$`Elevation (m)`) #force it to be a number
+elevdata$`Elevation_m` <- elevdata$`Elevation (m)`
+elevdata$Population <- factor(elevdata$Population, levels = elevdata$Population) #make pops a factor
+elevdata.elv <- elevdata[order(elevdata$`Elevation_m`),] #order the pops by elevation instead of alphabetically
+elevdata.elv$Population <- factor(elevdata.elv$Population, levels = elevdata.elv$Population) #make pops a factor
+elevdata.elv <- merge(elevdata.elv, clines, by = "Population")
+
+elevdata2 <-read_csv("./Data/elevdata2.csv")
+elevdata2$`Elevation (m)` <- as.numeric(elevdata2$`Elevation (m)`) #force it to be a number
+elevdata2$`Elevation_m` <- elevdata2$`Elevation (m)`
+elevdata2$Population <- factor(elevdata2$Population, levels = elevdata2$Population) #make pops a factor
+elevdata.elv2 <- elevdata2[order(elevdata2$`Elevation_m`),] #order the pops by elevation instead of alphabetically
+elevdata.elv2$Population <- factor(elevdata.elv2$Population, levels = elevdata.elv2$Population) #make pops a factor
+elevdata.elv <- merge(elevdata.elv, clines, by = "Population")
+
+full_dataset<- merge(full_dataset, elevdata, by="Population")
+```
+
+#Data analysis
+```{r geography}
+#map! colored by elevation
+mappops_elev <- get_map(location = c(lon = mean(elevdata$Longitude), lat = mean(elevdata$Latitude)), zoom = 8, maptype = "satellite", scale = 4)
+ggmap(mappops_elev) +
+  geom_point(data = elevdata.elv, aes(x = Longitude, y = Latitude, color = `Elevation (m)`, size = 1), shape = 20)+
+  scale_color_gradient2(low="green", mid="yellow",high="red", midpoint=1800, breaks=c(1000,1800,2500), labels=c("1000","1800","2500")) +
+  guides(fill=FALSE, alpha=FALSE, size=FALSE)
+
+install.packages("paletteer")
+library("paletteer")
+
+#map colored by cline
+mappops_lat2 <- get_map(location = c(lon = mean(elevdata2$Longitude), lat = mean(elevdata2$Latitude)), zoom = 8, maptype = "satellite", scale = 4)
+map_lat2 <- ggmap(mappops_lat2, extent = "panel")+
+  geom_point(data = elevdata.elv2, aes(x = Longitude, y = Latitude, fill = `Latitude`), size = 4, shape = 21, color = "white")+ #change fill to Cline to get data colored by cline
+#  scale_fill_distiller(palette = "YlOrBr")+
+  paletteer::scale_fill_paletteer_c("viridis::plasma")+
+  ylab("Latitude")+
+  xlab("Longitude")
+plot(map_lat2)
+
+ggsave("map_lat.png", plot = map_lat2, units="in", width=6, height=6, dpi=600)
+
+#reciprocal transplant maps - transfer later
+recip <- read_csv("./Data/recippops.csv")
+recipmap <- get_map(location = c(lon = mean(recip$Longitude), lat = mean(recip$Latitude)), zoom = 8, maptype = "satellite", scale = 4)
+recip_map <- ggmap(recipmap, extent = "panel")+
+  geom_point(data = recip, aes(x = Longitude, y = Latitude, fill = Elevation), size = 4, shape = 21, color = "white")+
+  ylab("Latitude")+
+  xlab("Longitude")
+plot(recip_map)
+ggsave("recipmap.png", plot = recip_map, units="in", width=6, height=6, dpi=600)
+```
+
+```{r tidy data}
+tidy <- full_dataset %>% dplyr::group_by(Population, Latitude, Line, Cline, comb, Day_length) %>% dplyr::summarise(
+  "Mean_leaf_lobing_log" = mean(log_lobing, na.rm = TRUE),
+  "Mean_leaf_lobing" = mean(`Leaf lobing index`, na.rm = TRUE),
+  "Leaf_size" = mean(`Leaf area (px)`, na.rm = TRUE),
+  "Plant_height" = mean(`Plant Height (mm)`, na.rm = TRUE),
+  "Days_to_flower" = mean(`Days to flowering`, na.rm = TRUE),
+  "Corolla_length" = mean(`Corolla Length (mm)`, na.omit = TRUE),
+  "Corolla_width" = mean(`Corolla Width (mm)`, na.omit = TRUE),
+  "Short_stamen_length" = mean(`Smallest Stamen Length (mm)`, na.omit = TRUE),
+  "Long_stamen_length" = mean(`Longest Stamen Length (mm)`, na.omit = TRUE),
+  "Pistil_length" = mean(`Pistil Length (mm)`, na.omit = TRUE),
+  "Herkogamy" = mean(`Stigma-anther separation`, na.omit = TRUE))
+```
+
+```{r critical photoperiod, 11h flowering}
+####percentage of plants that reached flowering under short days####
+full_dataset$`Germination Date` <- as.factor(full_dataset$`Germination Date`)
+short_only <- filter(full_dataset, `Day length` == "11h")
+tidy_flower <- short_only %>% dplyr::group_by(Population, Line, comb, Cline, Latitude) %>% dplyr::summarise(
+  "all_plants" = length(`Germination Date`),
+  "no_flower" = sum(is.na(`Days to flowering`))) #0 no_flower means all flowered
+tidy_flower$proportion_flower <- (tidy_flower$all_plants - tidy_flower$no_flower)/tidy_flower$all_plants
+
+tidy_flower$popdaylength <- paste(tidy_flower$Population, '11h', sep = "")
+
+#plasticity ANOVA/Tukey
+M1 <- lme(proportion_flower ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_flower)
+
+#use merge to add elev data to this dataframe
+elev_flower <- merge(tidy_flower, elevdata.elv2, by = "Population")
+#linear regression against elevation
+regress_flower <- ggplot(data = elev_flower, aes(x=`Elevation (m)`,y=proportion_flower))+
+  xlab("Elevation (m)")+
+  ylab("Proportion flowering in 11h days")+
+  ggtitle("Critical photoperiod  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x, alpha = 0.7))+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank())+
+  stat_regline_equation(label.x = 1000, label.y = 1.5)+
+  stat_regline_equation(label.x = 1000, label.y = 1.3, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)+
+  theme(legend.position ="none")
+plot(regress_flower)
+
+#scaled differently for exporting
+regress_flower <- ggplot(data = elev_flower, aes(x=`Elevation (m)`,y=proportion_flower))+
+  xlab("Elevation (m)")+
+  ylab("Proportion flowering in 11h days")+
+  ggtitle("Critical photoperiod ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = `Latitude.x`), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "FALSE")+
+  stat_regline_equation(label.x = 1000, label.y = 1.2)+
+  stat_regline_equation(label.x = 1000, label.y = 1.1, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_flower)
+ggsave("critphotoperiod_elev.png", plot = regress_flower, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(proportion_flower ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_flower)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+
+####percent flowering short day BAR graph####
+flower <- ggplot(data = flower.by.elev)+
+  aes(x = `allpops`)+
+  aes(y = `percentflower`)+
+  geom_bar(color = "black", stat = "identity")+
+  aes(fill = `Elevation (m)`)+
+  theme_bw()+
+  xlab("Population")+
+  ylab("Proportion flowered")+
+  scale_fill_gradient2(midpoint = mean(flowering$`Elevation (m)`), low = "green", mid = "yellow", high = "red")+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(legend.position = "none")
+plot(flower)
+
+####percent flowering reaction norm style####
+flowering3 <- full_dataset %>% group_by(Population, Line, `Day length`, Cline, Latitude) %>% dplyr::summarize(
+  no.flower = sum(is.na(`Days to flowering`)),
+  yes.flower = sum(!is.na(`Days to flowering`), na.rm = TRUE),
+  all.flower = no.flower + yes.flower,
+  percent.flower = yes.flower/all.flower)
+
+percent_flower <- ggplot(data=flowering3)+   
+  aes(x=`Day length`)+
+  aes(y=percent.flower)+
+  aes(group=Line)+
+  aes(color=Latitude)+ 
+  aes(fill=Latitude)+ 
+  aes(shape=`Day length`)+ 
+  geom_point()+
+  geom_line()+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Proportion of plants flowering")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(percent_flower)
+
+####latitude trends####
+#regression by LATITUDE
+regress_crit_lat <- ggplot(data = elev_flower, aes(x=`Latitude.x`,y=proportion_flower))+
+  xlab("Latitude")+
+  ylab("Proportion flowering in 11h days")+
+  ggtitle("Critical photoperiod  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 1.28)+
+  stat_regline_equation(label.x = 36.25, label.y = 1.18, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_crit_lat)
+ggsave("crit_lat.png", path = "./Latitude/Plastic", plot = regress_crit_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r days to flower}
+####plasticity####
+dtf_rxn <- ggplot(data=tidy, aes(alpha = 0.75))+ 
+  ggtitle("Days to flower plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Days_to_flower`)+
+  xlab("Photoperiod")+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean days to flower")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(dtf_rxn)
+ggsave("dtfrxn.png", plot = dtf_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+dtf_facet <- ggplot(data=tidy)+ 
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Days_to_flower`)+
+  xlab("Photoperiod")+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean days to flower")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(dtf_facet)
+ggsave("dtffacetrxn.png", plot = dtf_facet, units="in", width=4, height=4, dpi=600)
+
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_dtf <- full_dataset %>% group_by(Population, Line, comb, Day_length) %>% reframe(
+  "Days_to_flowering" = mean(`Days to flowering`, na.rm = TRUE))
+plastic_dtf <- pivot_wider(tidy_dtf, names_from = c("Day_length"), values_from = c("Days_to_flowering"))
+plastic_dtf$strength <- plastic_dtf$`15h`-plastic_dtf$`11h`
+plastic_dtf$strength_dtf <- plastic_dtf$`15h`-plastic_dtf$`11h`
+
+#population
+tidy_dtf$popdaylength <- paste(tidy_dtf$Population, tidy_dtf$Day_length, sep = "")
+tidy_dtf$popdaylength <- as.factor(tidy_dtf$popdaylength)
+
+#genotype
+tidy_dtf$genodaylength <- paste(tidy_dtf$comb, tidy_dtf$Day_length, sep = "_")
+tidy_dtf$genodaylength <- as.factor(tidy_dtf$genodaylength)
+
+####dtf plasticity BY LINE####
+full_dataset_dtf <- full_dataset %>% group_by(Population, Line, comb, Day_length, Cline, Latitude) %>% summarise("plant_dtf" = `Days to flowering`, "mean_dtf" = mean(`Days to flowering`, na.rm = TRUE))
+
+full_dataset_dtf$linedaylength <- paste(full_dataset_dtf$comb, full_dataset_dtf$Day_length, sep = "")
+full_dataset_dtf$linedaylength <- as.factor(full_dataset_dtf$linedaylength)
+M1.2 <- glm(plant_dtf ~ linedaylength, na.action = na.omit, data = full_dataset_dtf)
+anova(M1.2)
+
+dtf_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(dtf_plasticity1.2)
+
+#plasticity ANOVA/Tukey
+#population level
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Days_to_flowering ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_dtf)
+anova(M1, type= "marginal")
+dtf_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(dtf_plasticity)
+M1.overall <- lme(Days_to_flowering ~ Day_length, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_dtf)
+anova(M1.overall)
+
+#genotype level
+options(contrasts=c("contr.sum", "contr.poly"))
+M1_1 <- gls(Days_to_flowering ~ genodaylength, na.action = na.omit, data = tidy_dtf)
+drop1(M1_1, type = "marginal")
+dtf_plasticity_genotype <- glht(M1_1, linfct = mcp(genodaylength = c("BCL_1_11h - BCL_1_15h = 0")))
+summary(dtf_plasticity_genotype)
+
+####GxE####
+M1 <- lm(`Days to flowering` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####elevation####
+#use merge to add elev data to this dataframe
+elev_dtf <- merge(plastic_dtf, elevdata, by = "Population")
+#linear regression against elevation
+regress_dtf <- ggplot(data = elev_dtf, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Flowering time plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of flowering time plasticity")+
+  stat_smooth(method = "lm", color="black")+
+    geom_point(aes(color = `Latitude`), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 2)+
+  stat_regline_equation(label.x = 1000, label.y = 1.0, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_dtf)
+ggsave("regressdtf.png", plot = regress_dtf, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude, na.action = na.omit, random=~1| Population/Line, data = elev_dtf)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_dtf_lat <- ggplot(data = elev_dtf, aes(x=`Latitude`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of flowering time plasticity")+
+  ggtitle("Flowering time plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 4)+
+  stat_regline_equation(label.x = 36.25, label.y = 2, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_dtf_lat)
+ggsave("dtf_lat.png", path = "./Latitude/Plasticity", plot = regress_dtf_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r plant height}
+####plasticity####
+height_rxn <- ggplot(data=tidy)+
+  ggtitle("Plant height plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Plant_height`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  xlab("Photoperiod")+
+  ylab("Mean plant height (mm)")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(height_rxn)
+ggsave("heightrxn.png", plot = height_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+height_facet <- ggplot(data=tidy)+
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Plant_height`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean plant height (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(height_facet)
+ggsave("heighfacettrxn.png", plot = height_facet, units="in", width=4, height=4, dpi=600)
+
+####determine GxE####
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Plant_height ~ Day_length + comb + Day_length * comb, na.action = na.omit, random =~ 1 | Population, method = "REML", data = full_dataset)
+M1 <- lm(`Plant Height (mm)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_height <- full_dataset %>% group_by(Population, Line, comb, Day_length, Cline, Latitude) %>% reframe(
+  "Plant_height" = mean(`Plant Height (mm)`, na.rm = TRUE))
+plastic_height <- pivot_wider(tidy_height, names_from = c("Day_length"), values_from = c("Plant_height"))
+plastic_height$strength <- plastic_height$`15h`-plastic_height$`11h`
+plastic_height$strength_height <- plastic_height$`15h`-plastic_height$`11h`
+mean(plastic_height$strength, na.rm = TRUE)
+
+tidy_height$popdaylength <- paste(tidy_height$Population, tidy_height$Day_length, sep = "")
+tidy_height$popdaylength <- as.factor(tidy_height$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Plant_height ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_height)
+anova(M1, type= "marginal")
+
+M1.overall <- lme(Plant_height ~ Day_length, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_height)
+anova(M1.overall, type= "marginal")
+
+height_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(height_plasticity)
+
+####height plasticity BY LINE####
+full_dataset_height <- full_dataset %>% group_by(Population, Line, comb, Day_length, Cline, Latitude) %>% reframe("plant_height" = `Plant Height (mm)`, "mean_height" = mean(`Plant Height (mm)`, na.rm = TRUE))
+
+full_dataset_height$linedaylength <- paste(full_dataset_height$comb, full_dataset_height$Day_length, sep = "")
+full_dataset_height$linedaylength <- as.factor(full_dataset_height$linedaylength)
+M1.2 <- glm(plant_height ~ linedaylength, na.action = na.omit, data = full_dataset_height)
+anova(M1.2)
+
+height_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL211h - BCL215h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL411h - BCL415h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK2711h - DNK2715h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL711h - HUL715h = 0",
+                                                         "HUL911h - HUL915h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1111h - LIB1115h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN111h - OPN115h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN711h - OPN715h = 0",
+                                                         "OPN811h - OPN815h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "OPN1811h - OPN1815h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL211h - PETL215h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL3811h - SHL3815h = 0",
+                                                         "SHL911h - SHL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL511h - SHL515h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6011h - WLF6015h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "WLF6211h - WLF6215h = 0",
+                                                         "WLF6311h - WLF6315h = 0",
+                                                         "WLF7211h - WLF7215h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0",
+                                                         "YCN911h - YCN915h = 0",
+                                                         "YCN1211h - YCN1215h = 0",
+                                                         "YCN1311h - YCN1315h = 0")))
+summary(height_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_height <- merge(plastic_height, elevdata, by = "Population")
+#linear regression against elevation
+regress_height <- ggplot(data = elev_height, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Plant height plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of plant height plasticity")+
+  stat_smooth(method = "lm", color="black")+
+    geom_point(aes(color = `Latitude.x`), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "FALSE")+
+  stat_regline_equation(label.x = 1000, label.y = 110)+
+  stat_regline_equation(label.x = 1000, label.y = 100, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_height)
+ggsave("regressheight.png", plot = regress_height, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_height)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_height_lat <- ggplot(data = elev_height, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of plant height plasticity")+
+  ggtitle("Plant height  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 95)+
+  stat_regline_equation(label.x = 36.25, label.y = 87, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_height_lat)
+ggsave("height_lat.png", path = "./Latitude/Plasticity", plot = regress_height_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r leaf shape}
+####plasticity####
+#overall reaction norm, not faceted
+leaflobing_rxn <- ggplot(data=tidy)+
+  ggtitle("Leaf lobing plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Mean_leaf_lobing`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  xlab("Photoperiod")+
+  ylab("Mean degree of leaf lobing")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(leaflobing_rxn)
+ggsave("lobingrxn.png", plot = leaflobing_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+leaflobing_facet <- ggplot(data=tidy)+   
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Mean_leaf_lobing`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  xlab("Photoperiod")+
+  ylab("Mean degree of leaf lobing")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(leaflobing_facet)
+ggsave("lobingfacet.png", plot = leaflobing_facet, units="in", width=4, height=4, dpi=600)
+
+####determine GxE####
+M1 <- lm(`Leaf lobing index` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length + Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+#need to do a Tukey but idk how: to determine WHICH lines significantly differ between photoperiods
+
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_leaf <- full_dataset %>% group_by(Population, Line, comb, Day_length, Cline, Latitude) %>% reframe(
+  "Mean_leaf_lobing" = mean(`Leaf lobing index`, na.rm = TRUE))
+plastic_leaf <- pivot_wider(tidy_leaf, names_from = c("Day_length"), values_from = c("Mean_leaf_lobing"))
+plastic_leaf$strength <- plastic_leaf$`15h`-plastic_leaf$`11h`
+plastic_leaf$strength_leafshape <- plastic_leaf$`15h`-plastic_leaf$`11h`
+mean(plastic_leaf$`15h`, na.rm=TRUE) - mean(plastic_leaf$`11h`, na.rm=TRUE)
+
+tidy_leaf$popdaylength <- paste(tidy_leaf$Population, tidy_leaf$Day_length, sep = "")
+tidy_leaf$popdaylength <- as.factor(tidy_leaf$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_leaf)
+anova(M1, type= "marginal")
+
+leaf_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(leaf_plasticity)
+
+#plasticity by line
+full_dataset_leaf <- full_dataset %>% group_by(Population, Line, comb, Day_length, Cline) %>% summarise("leaf_lobing" = `Leaf lobing index`, "mean_leaf_lobing" = mean(`Leaf lobing index`, na.rm = TRUE))
+
+full_dataset_leaf$linedaylength <- paste(full_dataset_leaf$comb, full_dataset_leaf$Day_length, sep = "")
+full_dataset_leaf$linedaylength <- as.factor(full_dataset_leaf$linedaylength)
+
+#plasticity by line ANOVA/Tukey
+model.matrix.gls <- function(object, ...) {
+  model.matrix(terms(object), data = getData(object), ...)}
+model.frame.gls <- function(object, ...) {
+  model.frame(formula(object), data = getData(object), ...)}
+terms.gls <- function(object, ...) {
+  terms(model.frame(object), ...)}
+options(contrasts=c("contr.sum", "contr.poly"))
+M1.2 <- glm(leaf_lobing ~ linedaylength, na.action = na.omit, data = full_dataset_leaf)
+anova(M1.2, type= "marginal")
+
+leaf_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL211h - BCL215h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL411h - BCL415h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK2711h - DNK2715h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL711h - HUL715h = 0",
+                                                         "HUL911h - HUL915h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1111h - LIB1115h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN111h - OPN115h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN711h - OPN715h = 0",
+                                                         "OPN811h - OPN815h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "OPN1811h - OPN1815h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL211h - PETL215h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL3811h - SHL3815h = 0",
+                                                         "SHL911h - SHL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL511h - SHL515h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6011h - WLF6015h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "WLF6211h - WLF6215h = 0",
+                                                         "WLF6311h - WLF6315h = 0",
+                                                         "WLF7211h - WLF7215h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0",
+                                                         "YCN911h - YCN915h = 0",
+                                                         "YCN1211h - YCN1215h = 0",
+                                                         "YCN1311h - YCN1315h = 0")))
+summary(leaf_plasticity1.2)
+
+M1.overall <- lme(Mean_leaf_lobing ~ Day_length, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_leaf)
+anova(M1.overall, type= "marginal")
+
+####elevation trends####
+#use merge to add elev data to this dataframe
+elev_leaf <- merge(plastic_leaf, elevdata, by = "Population")
+#linear regression against elevation
+regress_leaf <- ggplot(data = elev_leaf, aes(x=`Elevation (m)`,y=strength))+
+  xlab("Elevation (m)")+
+  ylab("Strength of leaf lobing plasticity")+
+  ggtitle("Leaf lobing plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 0.35)+
+  stat_regline_equation(label.x = 1000, label.y = 0.3, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_leaf)
+ggsave("leafshape_elev2.png", plot = regress_leaf, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_leaf)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+
+####latitude trends####
+#regression by LATITUDE
+regress_leaf_lat <- ggplot(data = elev_leaf, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of leaf lobing plasticity")+
+  ggtitle("Leaf lobing plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 0.35)+
+  stat_regline_equation(label.x = 36.25, label.y = 0.3, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_leaf_lat)
+ggsave("leafshape_lat.png", path = "./Latitude/Plasticity", plot = regress_leaf_lat, units="in", width=9, height=6, dpi=600)
+
+#anova leaf lobing * Latitude
+options(contrasts=c("contr.sum", "contr.poly"))
+M3 <- lme(strength ~ Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_leaf)
+anova(M3, type="marginal")
+
+```
+
+```{r leaf size}
+####reaction norms####
+leafsize_rxn <- ggplot(data=tidy)+ 
+  ggtitle("Leaf area plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Leaf_size`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  xlab("Photoperiod")+
+  ylab("Mean leaf area (px)")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(leafsize_rxn)
+ggsave("sizerxn.png", plot = leafsize_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+leafsize_facet <- ggplot(data=tidy)+  
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Leaf_size`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  xlab("Photoperiod")+
+  ylab("Mean leaf area (px)")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(leafsize_facet)
+ggsave("leafsizefacet.png", plot = leafsize_facet, units="in", width=4, height=4, dpi=600)
+
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_leafsize <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe(
+  "Leaf_size" = mean(`Leaf area (px)`, na.rm = TRUE))
+plastic_leafsize <- pivot_wider(tidy_leafsize, names_from = c("Day_length"), values_from = c("Leaf_size"))
+plastic_leafsize$strength <- plastic_leafsize$`15h`-plastic_leafsize$`11h`
+plastic_leafsize$strength_leafsize <- plastic_leafsize$`15h`-plastic_leafsize$`11h`
+mean(plastic_leafsize$`11h`, na.rm=TRUE)
+mean(plastic_leafsize$`15h`, na.rm=TRUE)
+mean(plastic_leafsize$`15h`, na.rm=TRUE) - mean(plastic_leafsize$`11h`, na.rm=TRUE)
+
+#population
+tidy_leafsize$popdaylength <- paste(tidy_leafsize$Population, tidy_leafsize$Day_length, sep = "")
+tidy_leafsize$popdaylength <- as.factor(tidy_leafsize$popdaylength)
+
+#genotype
+tidy_leafsize$genodaylength <- paste(tidy_leafsize$comb, tidy_leafsize$Day_length, sep = "_")
+tidy_leafsize$genodaylength <- as.factor(tidy_leafsize$genodaylength)
+
+#plasticity ANOVA/Tukey
+#population level
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Leaf_size ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_leafsize)
+anova(M1, type= "marginal")
+leafsize_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(leafsize_plasticity)
+
+####area plasticity BY LINE####
+full_dataset_area <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe("leaf_area" = `Leaf area (px)`, "mean_area" = mean(`Leaf area (px)`, na.rm = TRUE))
+
+full_dataset_area$linedaylength <- paste(full_dataset_area$comb, full_dataset_area$Day_length, sep = "")
+full_dataset_area$linedaylength <- as.factor(full_dataset_area$linedaylength)
+M1.2 <- glm(leaf_area ~ linedaylength, na.action = na.omit, data = full_dataset_area)
+anova(M1.2)
+
+area_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL211h - BCL215h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL411h - BCL415h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK2711h - DNK2715h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL711h - HUL715h = 0",
+                                                         "HUL911h - HUL915h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1111h - LIB1115h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN111h - OPN115h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN711h - OPN715h = 0",
+                                                         "OPN811h - OPN815h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "OPN1811h - OPN1815h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL211h - PETL215h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SHL3811h - SHL3815h = 0",
+                                                         "SHL911h - SHL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL511h - SHL515h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6011h - WLF6015h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "WLF6211h - WLF6215h = 0",
+                                                         "WLF6311h - WLF6315h = 0",
+                                                         "WLF7211h - WLF7215h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0",
+                                                         "YCN911h - YCN915h = 0",
+                                                         "YCN1211h - YCN1215h = 0",
+                                                         "YCN1311h - YCN1315h = 0")))
+summary(area_plasticity1.2)
+
+####GxE####
+M1 <- lm(`Leaf area (px)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####elevation####
+#use merge to add elev data to this dataframe
+elev_leafsize <- merge(plastic_leafsize, elevdata, by = "Population")
+#linear regression against elevation
+regress_leafsize <- ggplot(data = elev_leafsize, aes(x=`Elevation (m)`,y=strength))+
+  xlab("Elevation (m)")+
+  ylab("Strength of leaf size plasticity")+
+  ggtitle("Leaf size plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 25000)+
+  stat_regline_equation(label.x = 1000, label.y = 19000, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_leafsize)
+ggsave("leafsize_elev.png", plot = regress_leafsize, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_leafsize)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_leafarea_lat <- ggplot(data = elev_leafsize, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of leaf area plasticity")+
+  ggtitle("Leaf lobing area  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 25000)+
+  stat_regline_equation(label.x = 36.25, label.y = 20000, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_leafarea_lat)
+ggsave("leafarea_lat.png", path = "./Latitude/Plastic", plot = regress_leafarea_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r corolla length}
+####reaction norms####
+#overall reaction norm, not faceted
+corolla_l_rxn <- ggplot(data=tidy)+
+  ggtitle("Corolla length plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Corolla_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean corolla length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(corolla_l_rxn)
+ggsave("corollal.png", plot = corolla_l_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+corolla_l_facet <- ggplot(data=tidy)+
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Corolla_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean corolla length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(corolla_l_facet)
+ggsave("corollalfacet.png", plot = corolla_l_facet, units="in", width=4, height=4, dpi=600)
+
+####calculate GxE####
+M1 <- lm(`Corolla Length (mm)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length + Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_len <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe(
+  "Corolla_length" = mean(`Corolla Length (mm)`, na.rm = TRUE))
+plastic_length <- pivot_wider(tidy_len, names_from = c("Day_length"), values_from = c("Corolla_length"))
+plastic_length$strength <- plastic_length$`15h`-plastic_length$`11h`
+plastic_length$strength_length <- plastic_length$`15h`-plastic_length$`11h`
+
+tidy_len$popdaylength <- paste(tidy_len$Population, tidy_len$Day_length, sep = "")
+tidy_len$popdaylength <- as.factor(tidy_len$popdaylength)
+
+#by line
+full_dataset_c_len <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe("c_len" = `Corolla Length (mm)`, "mean_c_len" = mean(`Corolla Length (mm)`, na.rm = TRUE))
+
+full_dataset_c_len$linedaylength <- paste(full_dataset_c_len$comb, full_dataset_c_len$Day_length, sep = "")
+full_dataset_c_len$linedaylength <- as.factor(full_dataset_c_len$linedaylength)
+M1.2 <- glm(c_len ~ linedaylength, na.action = na.omit, data = full_dataset_c_len)
+anova(M1.2)
+
+c_len_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(c_len_plasticity1.2)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Corolla_length ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_len)
+anova(M1, type= "marginal")
+
+height_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(height_plasticity)
+
+####elevation trends####
+#use merge to add elev data to this dataframe
+elev_clen <- merge(plastic_length, elevdata, by = "Population")
+#linear regression against elevation
+regress_clen <- ggplot(data = elev_clen, aes(x=`Elevation (m)`,y=strength))+
+  xlab("Elevation (m)")+
+  ylab("Strength of corolla length plasticity")+
+  ggtitle("Corolla length plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 11)+
+  stat_regline_equation(label.x = 1000, label.y = 10, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_clen)
+ggsave("clen.png", plot = regress_clen, units="in", path = "./Elevation/Plasticity", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_length)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_clen_lat <- ggplot(data = elev_clen, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of corolla length plasticity")+
+  ggtitle("Corolla length plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 8)+
+  stat_regline_equation(label.x = 36.25, label.y = 7, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_clen_lat)
+ggsave("clen_lat.png", path = "./Latitude/Plastic", plot = regress_clen_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r corolla width}
+####plasticity####
+#overall reaction norm, not faceted
+corolla_w_rxn <- ggplot(data=tidy)+ 
+  ggtitle("Corolla width plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Corolla_width`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean corolla width (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(corolla_w_rxn)
+ggsave("corollaw.png", plot = corolla_w_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+corolla_w_facet <- ggplot(data=tidy)+ 
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Corolla_width`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean corolla width (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(corolla_w_facet)
+ggsave("corollawfacet.png", plot = corolla_w_facet, units="in", width=4, height=4, dpi=600)
+
+####determine if 11h phenotype significantly differs from 15h phenotype####
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length + Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+
+####GxE####
+M1 <- lm(`Corolla Width (mm)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_width <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe(
+  "Corolla_width" = mean(`Corolla Width (mm)`, na.rm = TRUE))
+plastic_width <- pivot_wider(tidy_width, names_from = c("Day_length"), values_from = c("Corolla_width"))
+plastic_width$strength <- plastic_width$`15h`-plastic_width$`11h`
+plastic_width$strength_width <- plastic_width$`15h`-plastic_width$`11h`
+dif <- mean(plastic_width$`15h`, na.rm=TRUE) - mean(plastic_width$`11h`, na.rm=TRUE)
+
+tidy_width$popdaylength <- paste(tidy_width$Population, tidy_width$Day_length, sep = "")
+tidy_width$popdaylength <- as.factor(tidy_width$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Corolla_width ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_width)
+anova(M1, type= "marginal")
+
+c_width_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(c_width_plasticity)
+
+####c_wid plasticity BY LINE####
+full_dataset_c_wid <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% regroup("plant_c_wid" = `Corolla Width (mm)`, "mean_c_wid" = mean(`Corolla Width (mm)`, na.rm = TRUE))
+
+full_dataset_c_wid$linedaylength <- paste(full_dataset_c_wid$comb, full_dataset_c_wid$Day_length, sep = "")
+full_dataset_c_wid$linedaylength <- as.factor(full_dataset_c_wid$linedaylength)
+M1.2 <- glm(plant_c_wid ~ linedaylength, na.action = na.omit, data = full_dataset_c_wid)
+anova(M1.2)
+
+c_wid_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(c_wid_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_width <- merge(plastic_width, elevdata, by = "Population")
+#linear regression against elevation
+regress_width <- ggplot(data = elev_width, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Corolla width plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of corolla width plasticity")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 11)+
+  stat_regline_equation(label.x = 1000, label.y = 10, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_width)
+ggsave("rwidth.png", plot = regress_width, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_width)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_cwid_lat <- ggplot(data = elev_width, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of corolla width plasticity")+
+  ggtitle("Corolla width plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 8)+
+  stat_regline_equation(label.x = 36.25, label.y = 7, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_cwid_lat)
+ggsave("cwid_lat.png", path = "./Latitude/Plastic", plot = regress_cwid_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r short stamen length}
+####plasticity####
+#overall reaction norm, not faceted
+s_stamen_rxn <- ggplot(data=tidy)+
+  ggtitle("Short stamen plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Short_stamen_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean shortest stamen length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(s_stamen_rxn)
+ggsave("sstamen.png", plot = s_stamen_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+s_stamen_facet <- ggplot(data=tidy)+  
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Short_stamen_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean shortest stamen length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(s_stamen_facet)
+ggsave("sstamenfacet.png", plot = s_stamen_facet, units="in", width=4, height=4, dpi=600)
+
+####determine if 11h phenotype significantly differs from 15h phenotype####
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length + Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+#need to do a Tukey but idk how: to determine WHICH lines significantly differ between photoperiods
+
+####GxE####
+M1 <- lm(`Shortest Stamen Length (mm)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_s_stamen <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe(
+  "Short_stamen" = mean(`Smallest Stamen Length (mm)`, na.rm = TRUE))
+plastic_s_stamen <- pivot_wider(tidy_s_stamen, names_from = c("Day_length"), values_from = c("Short_stamen"))
+plastic_s_stamen$strength <- plastic_s_stamen$`15h`-plastic_s_stamen$`11h`
+plastic_s_stamen$strength_s_stamen <- plastic_s_stamen$`15h`-plastic_s_stamen$`11h`
+
+tidy_s_stamen$popdaylength <- paste(tidy_s_stamen$Population, tidy_s_stamen$Day_length, sep = "")
+tidy_s_stamen$popdaylength <- as.factor(tidy_s_stamen$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Short_stamen ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_s_stamen)
+anova(M1, type= "marginal")
+
+s_stamen_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(s_stamen_plasticity)
+
+####s_stamen plasticity BY LINE####
+full_dataset_s_stamen <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe("plant_s_stamen" = `Smallest Stamen Length (mm)`, "mean_s_stamen" = mean(`Smallest Stamen Length (mm)`, na.rm = TRUE))
+
+full_dataset_s_stamen$linedaylength <- paste(full_dataset_s_stamen$comb, full_dataset_s_stamen$Day_length, sep = "")
+full_dataset_s_stamen$linedaylength <- as.factor(full_dataset_s_stamen$linedaylength)
+M1.2 <- glm(plant_s_stamen ~ linedaylength, na.action = na.omit, data = full_dataset_s_stamen)
+anova(M1.2)
+
+s_stamen_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(s_stamen_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_s_stamen <- merge(plastic_s_stamen, elevdata, by = "Population")
+#linear regression against elevation
+regress_s_stamen <- ggplot(data = elev_leaf, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Short stamen plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of short stamen plasticity")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = .4)+
+  stat_regline_equation(label.x = 1000, label.y = .3, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_s_stamen)
+ggsave("sstamen.png", plot = regress_s_stamen, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_s_stamen)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_s_stamen_lat <- ggplot(data = elev_s_stamen, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of short stamen length plasticity")+
+  ggtitle("Short stamen length plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 5)+
+  stat_regline_equation(label.x = 36.25, label.y = 4, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_s_stamen_lat)
+ggsave("sstamen_lat.png", path = "./Latitude/Plastic", plot = regress_s_stamen_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r long stamen length}
+####plasticity####
+#overall reaction norm, not faceted
+l_stamen_rxn <- ggplot(data=tidy)+ 
+  ggtitle("Long stamen plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Long_stamen_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean longest stamen length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(l_stamen_rxn)
+ggsave("lstamen.png", plot = l_stamen_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+l_stamen_facet <- ggplot(data=tidy)+
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Long_stamen_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean longest stamen length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(l_stamen_facet)
+ggsave("lstamenfacet.png", plot = l_stamen_facet, units="in", width=4, height=4, dpi=600)
+
+####determine if 11h phenotype significantly differs from 15h phenotype####
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length + Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+#need to do a Tukey but idk how: to determine WHICH lines significantly differ between photoperiods
+
+####GxE####
+M1 <- lm(`Longest Stamen Length (mm)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_l_stamen <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe(
+  "Long_stamen" = mean(`Longest Stamen Length (mm)`, na.rm = TRUE))
+plastic_l_stamen <- pivot_wider(tidy_l_stamen, names_from = c("Day_length"), values_from = c("Long_stamen"))
+plastic_l_stamen$strength <- plastic_l_stamen$`15h`-plastic_l_stamen$`11h`
+plastic_l_stamen$strength_l_stamen <- plastic_l_stamen$`15h`-plastic_l_stamen$`11h`
+
+tidy_l_stamen$popdaylength <- paste(tidy_l_stamen$Population, tidy_l_stamen$Day_length, sep = "")
+tidy_l_stamen$popdaylength <- as.factor(tidy_l_stamen$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Long_stamen ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_l_stamen)
+anova(M1, type= "marginal")
+
+l_stamen_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(l_stamen_plasticity)
+
+####l_stamen plasticity BY LINE####
+full_dataset_l_stamen <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe("plant_l_stamen" = `Longest Stamen Length (mm)`, "mean_l_stamen" = mean(`Longest Stamen Length (mm)`, na.rm = TRUE))
+
+full_dataset_l_stamen$linedaylength <- paste(full_dataset_l_stamen$comb, full_dataset_l_stamen$Day_length, sep = "")
+full_dataset_l_stamen$linedaylength <- as.factor(full_dataset_l_stamen$linedaylength)
+M1.2 <- glm(plant_l_stamen ~ linedaylength, na.action = na.omit, data = full_dataset_l_stamen)
+anova(M1.2)
+
+l_stamen_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(l_stamen_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_l_stamen <- merge(plastic_l_stamen, elevdata, by = "Population")
+#linear regression against elevation
+regress_l_stamen <- ggplot(data = elev_l_stamen, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Long stamen plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of long stamen plasticity")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 6)+
+  stat_regline_equation(label.x = 1000, label.y = 5, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_l_stamen)
+ggsave("lstam.png", plot = regress_l_stamen, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_l_stamen)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_lstamen_lat <- ggplot(data = elev_l_stamen, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of long stamen length plasticity")+
+  ggtitle("Long stamen length plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 5)+
+  stat_regline_equation(label.x = 36.25, label.y = 4.5, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_lstamen_lat)
+ggsave("lstamen_lat.png", path = "./Latitude/Plastic", plot = regress_lstamen_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r pistil length}
+####plasticity####
+#overall reaction norm, not faceted
+pistil_rxn <- ggplot(data=tidy)+ 
+  ggtitle("Pistil length plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Pistil_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean pistil length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(pistil_rxn)
+ggsave("pistil.png", plot = pistil_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+pistil_facet <- ggplot(data=tidy)+   
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Pistil_length`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean pistil length (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(pistil_facet)
+ggsave("pistilfacet.png", plot = pistil_facet, units="in", width=4, height=4, dpi=600)
+
+####GxE####
+M1 <- lm(`Pistil Length (mm)` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####determine if 11h phenotype significantly differs from 15h phenotype (not done below this point)####
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Mean_leaf_lobing ~ Day_length * Population, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy)
+#a1 <- gls(Mean_leaf_lobing ~ Day_length + Population, na.action = na.omit, data = tidy, method = "REML")
+anova(M1, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M1), resid(M1, type="normalized"))
+hist(resid(M1,type="normalized"))
+#need to do a Tukey but idk how: to determine WHICH lines significantly differ between photoperiods
+
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_pistil <- full_dataset %>% group_by(Population, Line, comb, Day_length) %>% reframe(
+  "Pistil" = mean(`Pistil Length (mm)`, na.rm = TRUE))
+plastic_pistil <- pivot_wider(tidy_pistil, names_from = c("Day_length"), values_from = c("Pistil"))
+plastic_pistil$strength <- plastic_pistil$`15h`-plastic_pistil$`11h`
+plastic_pistil$strength_pistil <- plastic_pistil$`15h`-plastic_pistil$`11h`
+
+tidy_pistil$popdaylength <- paste(tidy_pistil$Population, tidy_pistil$Day_length, sep = "")
+tidy_pistil$popdaylength <- as.factor(tidy_pistil$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Pistil ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_pistil)
+anova(M1, type= "marginal")
+
+pistil_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(pistil_plasticity)
+
+####pistil plasticity BY LINE####
+full_dataset_pistil <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe("plant_pistil" = `Pistil Length (mm)`, "mean_pistil" = mean(`Pistil Length (mm)`, na.rm = TRUE))
+
+full_dataset_pistil$linedaylength <- paste(full_dataset_pistil$comb, full_dataset_pistil$Day_length, sep = "")
+full_dataset_pistil$linedaylength <- as.factor(full_dataset_pistil$linedaylength)
+M1.2 <- glm(plant_pistil ~ linedaylength, na.action = na.omit, data = full_dataset_pistil)
+anova(M1.2)
+
+pistil_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(pistil_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_pistil <- merge(plastic_pistil, elevdata, by = "Population")
+#linear regression against elevation
+regress_pistil <- ggplot(data = elev_pistil, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Pistil length plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of leaf lobing plasticity")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 7)+
+  stat_regline_equation(label.x = 1000, label.y = 6, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_pistil)
+ggsave("rpistil.png", plot = regress_pistil, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude, na.action = na.omit, random=~1| Population/Line, data = elev_pistil)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_pistil_lat <- ggplot(data = elev_pistil, aes(x=`Latitude`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of pistil length plasticity")+
+  ggtitle("Pistil length plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 6)+
+  stat_regline_equation(label.x = 36.25, label.y = 5, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_pistil_lat)
+ggsave("pistil_lat.png", path = "./Latitude/Plastic", plot = regress_pistil_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r herkogamy}
+####plasticity####
+#overall reaction norm, not faceted
+herk_rxn <- ggplot(data=tidy)+
+  ggtitle("Herkogamy plasticity")+
+  aes(x=`Day_length`)+
+  aes(y=`Herkogamy`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Stigma-anther separation (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(herk_rxn)
+ggsave("herk.png", plot = herk_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+herk_facet <- ggplot(data=tidy)+
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day_length`)+
+  aes(y=`Herkogamy`)+
+  aes(group=comb)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day_length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  facet_wrap(~Population)+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Stigma-anther separation (mm)")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(herk_facet)
+ggsave("herkfacet.png", plot = herk_facet, units="in", width=4, height=4, dpi=600)
+
+####GxE####
+M1 <- lm(`Stigma-anther separation` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=full_dataset)
+summary(M1)
+anova(M1)
+####calculate plasticity strength BY LINE####
+#want to subtract 11h from 15h leaf lobing value for each line in comb
+tidy_herk <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe(
+  "Herkogamy" = mean(`Stigma-anther separation`, na.rm = TRUE))
+plastic_herk <- pivot_wider(tidy_herk, names_from = c("Day_length"), values_from = c("Herkogamy"))
+plastic_herk$strength <- plastic_herk$`15h`-plastic_herk$`11h`
+plastic_herk$strength_herk <- plastic_herk$`15h`-plastic_herk$`11h`
+
+tidy_herk$popdaylength <- paste(tidy_herk$Population, tidy_herk$Day_length, sep = "")
+tidy_herk$popdaylength <- as.factor(tidy_herk$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(Herkogamy ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_herk)
+anova(M1, type= "marginal")
+
+herk_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(herk_plasticity)
+
+####herk plasticity BY LINE####
+full_dataset_herk <- full_dataset %>% group_by(Population, Line, comb, Day_length, Latitude) %>% reframe("plant_herk" = `Stigma-anther separation`, "mean_herk" = mean(`Stigma-anther separation`, na.rm = TRUE))
+
+full_dataset_herk$linedaylength <- paste(full_dataset_herk$comb, full_dataset_herk$Day_length, sep = "")
+full_dataset_herk$linedaylength <- as.factor(full_dataset_herk$linedaylength)
+M1.2 <- glm(plant_herk ~ linedaylength, na.action = na.omit, data = full_dataset_herk)
+anova(M1.2)
+
+herk_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL111h - BCL115h = 0",
+                                                                "BCL311h - BCL315h = 0",
+                                                                "BCL911h - BCL915h = 0",
+                                                                "BCL1511h - BCL1515h = 0",
+                                                         "BML411h - BML415h = 0",
+                                                         "BML511h - BML515h = 0",
+                                                         "BML611h - BML615h = 0",
+                                                         "BML711h - BML715h = 0",
+                                                         "BML1011h - BML1015h = 0",
+                                                         "BML1311h - BML1315h = 0",
+                                                         "BML1411h - BML1415h = 0",
+                                                         "BML1611h - BML1615h = 0",
+                                                         "BML1911h - BML1915h = 0",
+                                                         "DNK1411h - DNK1415h = 0",
+                                                         "DNK1711h - DNK1715h = 0",
+                                                         "DNK2111h - DNK2115h = 0",
+                                                         "DNK3011h - DNK3015h = 0",
+                                                         "DNK3411h - DNK3415h = 0",
+                                                         "DNK3811h - DNK3815h = 0",
+                                                         "DNK3911h - DNK3915h = 0",
+                                                         "GB111h - GB115h = 0",
+                                                         "GB211h - GB215h = 0",
+                                                         "GB2511h - GB2515h = 0",
+                                                         "GB3211h - GB3215h = 0",
+                                                         "GB3911h - GB3915h = 0",
+                                                         "GB4411h - GB4415h = 0",
+                                                         "HEH211h - HEH215h = 0",
+                                                         "HEH411h - HEH415h = 0",
+                                                         "HEH911h - HEH915h = 0",
+                                                         "HEH1211h - HEH1215h = 0",
+                                                         "HEH1611h - HEH1615h = 0",
+                                                         "HEH1711h - HEH1715h = 0",
+                                                         "HEH2011h - HEH2015h = 0",
+                                                         "HHR511h - HHR515h = 0",
+                                                         "HHR1711h - HHR1715h = 0",
+                                                         "HHR1811h - HHR1815h = 0",
+                                                         "HUL211h - HUL215h = 0",
+                                                         "HUL311h - HUL315h = 0",
+                                                         "HUL411h - HUL415h = 0",
+                                                         "HUL511h - HUL515h = 0",
+                                                         "HUL611h - HUL615h = 0",
+                                                         "HUL1011h - HUL1015h = 0",
+                                                         "HUL2011h - HUL2015h = 0",
+                                                         "LIB111h - LIB115h = 0",
+                                                         "LIB311h - LIB315h = 0",
+                                                         "LIB511h - LIB515h = 0",
+                                                         "LIB611h - LIB615h = 0",
+                                                         "LIB711h - LIB715h = 0",
+                                                         "LIB1011h - LIB1015h = 0",
+                                                         "LIB1211h - LIB1215h = 0",
+                                                         "LIB1311h - LIB1315h = 0",
+                                                         "OPN411h - OPN415h = 0",
+                                                         "OPN911h - OPN915h = 0",
+                                                         "OPN1511h - OPN1515h = 0",
+                                                         "OPN1611h - OPN1615h = 0",
+                                                         "PETL111h - PETL115h = 0",
+                                                         "PETL811h - PETL815h = 0",
+                                                         "PETL1411h - PETL1415h = 0",
+                                                         "SBL111h - SBL115h = 0",
+                                                         "SBL211h - SBL215h = 0",
+                                                         "SBL311h - SBL315h = 0",
+                                                         "SBL411h - SBL415h = 0",
+                                                         "SBL511h - SBL515h = 0",
+                                                         "SBL611h - SBL615h = 0",
+                                                         "SBL711h - SBL715h = 0",
+                                                         "SBL911h - SBL915h = 0",
+                                                         "SHL1011h - SHL1015h = 0",
+                                                         "SHL1211h - SHL1215h = 0",
+                                                         "SHL111h - SHL115h = 0",
+                                                         "SHL211h - SHL215h = 0",
+                                                         "SHL311h - SHL315h = 0",
+                                                         "SHL411h - SHL415h = 0",
+                                                         "SHL611h - SHL615h = 0",
+                                                         "TRT111h - TRT115h = 0",
+                                                         "TRT211h - TRT215h = 0",
+                                                         "TRT411h - TRT415h = 0",
+                                                         "TRT611h - TRT615h = 0",
+                                                         "TRT1111h - TRT1115h = 0",
+                                                         "WCL311h - WCL315h = 0",
+                                                         "WCL911h - WCL915h = 0",
+                                                         "WCL1011h - WCL1015h = 0",
+                                                         "WCL1111h - WCL1115h = 0",
+                                                         "WCL1311h - WCL1315h = 0",
+                                                         "WCL811h - WCL815h = 0",
+                                                         "WLF4711h - WLF4715h = 0",
+                                                         "WLF6111h - WLF6115h = 0",
+                                                         "YCN111h - YCN115h = 0",
+                                                         "YCN211h - YCN215h = 0")))
+summary(herk_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_herk <- merge(plastic_herk, elevdata, by = "Population")
+#linear regression against elevation
+regress_herk <- ggplot(data = elev_herk, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Herkogamy plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of herkogamy plasticity")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 6)+
+  stat_regline_equation(label.x = 1000, label.y = 5, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_herk)
+ggsave("rherk.png", plot = regress_herk, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude.x, na.action = na.omit, random=~1| Population/Line, data = elev_herk)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+####latitude trends####
+#regression by LATITUDE
+regress_herk_lat <- ggplot(data = elev_herk, aes(x=`Latitude.x`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of herkogamy plasticity")+
+  ggtitle("Herkogamy plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude.x), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 4)+
+  stat_regline_equation(label.x = 36.25, label.y = 3.4, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_herk_lat)
+ggsave("herk_lat.png", path = "./Latitude/Plastic", plot = regress_herk_lat, units="in", width=9, height=6, dpi=600)
+```
+
+```{r cleistogamy}
+####calculating cleistogamy per line####
+all_flowering <- filter(full_dataset, `Days to flowering` > 1)
+all_flowering$`Cleistogamy?` <- ifelse(all_flowering$Cleistogamy=="Y",1,0)
+
+all_flowering_df <- all_flowering %>% group_by(Population, Line, Cline, comb_, `Day length`, Latitude) %>% dplyr::count(comb_, name = "All flowering")
+chasmogamous <- filter(full_dataset, `Cleistogamy?` == "N")
+
+chasmogamous_df <- chasmogamous %>% group_by(Population, Line, Cline, comb, comb_, `Cleistogamy?`, `Day length`, Latitude) %>% dplyr::count(comb_, name = "Chasmogamous")
+chasmogamous_11h <- subset(chasmogamous_df, `Day length` == "11h")
+chasmogamous_15h <- subset(chasmogamous_df, `Day length` == "15h")
+cleistogamous <- filter(full_dataset, `Cleistogamy?` == "Y")
+cleistogamous_df <- cleistogamous %>% group_by(Population, Line, Cline, Latitude, comb_, `Cleistogamy?`, `Day length`) %>% dplyr::count(comb_, name = "Cleistogamous")
+cleistogamous_11h <- subset(cleistogamous_df, `Day length` == "11h")
+all_flowering_11h <- subset(all_flowering_df, `Day length` == "11h")
+flower11h <- merge(cleistogamous_11h, all_flowering_11h, by = "comb_", all.y = TRUE)
+flower11h$Cleistogamous <- ifelse(is.na(flower11h$Cleistogamous), 0, flower11h$Cleistogamous)
+#% cleistogamous 11h
+flower11h$percent_cleist_11h <- flower11h$Cleistogamous / flower11h$`All flowering`
+
+cleistogamous_15h <- subset(cleistogamous_df, `Day length` == "15h")
+all_flowering_15h <- subset(all_flowering_df, `Day length` == "15h")
+flower15h <- merge(cleistogamous_15h, all_flowering_15h, by = "comb_", all.y = TRUE)
+flower15h$Cleistogamous <- ifelse(is.na(flower15h$Cleistogamous), 0, flower15h$Cleistogamous)
+#% cleistogamous 15h
+flower15h$percent_cleist_15h <- flower15h$Cleistogamous / flower15h$`All flowering`
+
+cleistogamy <- merge(flower11h, flower15h, by = "comb_")
+
+cleistogamy <- subset(cleistogamy, select = c(comb_, percent_cleist_11h, percent_cleist_15h))
+
+cleistogamy <- separate(cleistogamy, col = comb_, into = c("Population", "Line"), sep = "_", remove = FALSE)
+cleistogamy <- merge(cleistogamy, elevdata.elv, by = "Population")
+
+cleist_pivot <- pivot_longer(cleistogamy, cols = c("percent_cleist_11h", "percent_cleist_15h"), names_to = c("Cleistogamy", "Day length"), names_sep = "percent_cleist_")
+
+cleist_plot <- ggplot(data = cleistogamy)+
+  aes(x = percent_cleist_11h)+
+  xlab("Proportion cleistogamous in 11h photoperiod")+
+  aes(y = percent_cleist_15h)+
+  ylab("Proportion cleistogamous in 15h photoperiod")+
+  aes(color = `Elevation (m)`)+
+  geom_point(position=position_jitter(h=0.03, w=0.03),
+             shape = 20, alpha = 0.5, size = 3, show.legend = TRUE)+
+  scale_color_continuous(type = "gradient")
+plot(cleist_plot)
+
+####plasticity####
+cleist_rxn <- ggplot(data=cleist_pivot)+
+  ggtitle("Cleistogamy plasticity")+
+  aes(x=`Day length`)+
+  aes(y=`value`)+
+  aes(group=comb_)+
+  aes(color=Latitude, alpha = 0.75)+
+  aes(fill=Latitude, alpha = 0.75)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day length`)+
+  geom_point(show.legend = FALSE, position=position_jitter(h=0.02, w=0.02))+
+  geom_path(stat = "identity", position=position_jitter(h=0.02, w=0.02))+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean cleistogamy")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+plot(cleist_rxn)
+ggsave("cleist.png", plot = cleist_rxn, units="in", width=4, height=4, dpi=600)
+
+#faceted reaction norms by population
+cleist_facet <- ggplot(data=cleist_pivot)+  
+  ggtitle("Faceted reaction norms")+
+  aes(x=`Day length`)+
+  aes(y=`value`)+
+  aes(group=comb_)+
+  aes(color=Latitude, alpha = 0.2)+
+  aes(fill=Latitude, alpha = 0.2)+
+  scale_alpha(guide = 'none')+
+  aes(shape=`Day length`)+
+  geom_point(show.legend = FALSE)+
+  geom_path(stat = "identity")+
+  scale_shape_manual(values=c(21,21))+
+  ylab("Mean cleistogamy")+
+  xlab("Photoperiod")+
+  theme_bw()+
+  facet_wrap(~Population)+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(legend.position = "none")
+plot(cleist_facet)
+ggsave("cleistfacet.png", plot = cleist_facet, units="in", width=4, height=4, dpi=600)
+
+#want to subtract 11h from 15h for each line in comb_
+tidy_cleist <- cleist_pivot %>% group_by(Population, Line, Cline.x, comb_, `Day length`) %>% reframe(
+  "Cleistogamy" = mean(`value`, na.rm = TRUE))
+plastic_cleist <- pivot_wider(tidy_cleist, names_from = c(`Day length`), values_from = c("Cleistogamy"))
+plastic_cleist$strength <- plastic_cleist$`11h`-plastic_cleist$`15h`
+plastic_cleist$strength_cleist <- plastic_cleist$strength
+plastic_cleist$comb <- (sub("_", "", plastic_cleist$comb_))
+
+tidy_cleist$popdaylength <- paste(tidy_cleist$Population, tidy_cleist$`Day length`, sep = "")
+tidy_cleist$popdaylength <- as.factor(tidy_cleist$popdaylength)
+
+#plasticity ANOVA/Tukey
+options(contrasts=c("contr.sum", "contr.poly"))
+M1 <- lme(cleist_plusone ~ popdaylength, na.action = na.omit, random =~ 1 | Line, method = "REML", data = tidy_cleist)
+anova(M1, type= "marginal")
+
+cleist_plasticity <- glht(M1, linfct = mcp(popdaylength = c("BCL11h - BCL15h = 0",
+                                                         "BML11h - BML15h = 0",
+                                                         "DNK11h - DNK15h = 0",
+                                                         "GB11h - GB15h = 0",
+                                                         "HEH11h - HEH15h = 0",
+                                                         "HHR11h - HHR15h = 0",
+                                                         "HUL11h - HUL15h = 0",
+                                                         "LIB11h - LIB15h = 0",
+                                                         "OPN11h - OPN15h = 0",
+                                                         "PETL11h - PETL15h = 0",
+                                                         "SBL11h - SBL15h = 0",
+                                                         "SHL11h - SHL15h = 0",
+                                                         "TRT11h - TRT15h = 0",
+                                                         "WCL11h - WCL15h = 0",
+                                                         "WLF11h - WLF15h = 0",
+                                                         "YCN11h - YCN15h = 0")))
+summary(cleist_plasticity)
+
+####GxE####
+M1 <- lm(`Cleistogamy?` ~ Day_length + comb + Day_length * comb, na.action = na.omit, data=all_flowering)
+summary(M1)
+anova(M1)
+####cleist plasticity BY LINE####
+full_dataset_cleist <- full_dataset %>% group_by(Population, Line, comb_, `Day length`, Latitude) %>% reframe("Cleistogamy" = `Cleistogamy?`)
+
+full_dataset_cleist$Cleistogamy <- revalue(full_dataset_cleist$Cleistogamy, c("Y"=1))
+full_dataset_cleist$Cleistogamy <- revalue(full_dataset_cleist$Cleistogamy, c("N"=0))
+
+full_dataset_cleist$linedaylength <- paste(full_dataset_cleist$comb_, full_dataset_cleist$`Day length`, sep = "")
+full_dataset_cleist$linedaylength <- as.factor(full_dataset_cleist$linedaylength)
+M1.2 <- lm(Cleistogamy ~ linedaylength, na.action = na.omit, data = full_dataset_cleist)
+anova(M1.2)
+
+cleist_plasticity1.2 <- glht(M1.2, linfct = mcp(linedaylength = c("BCL_111h - BCL_115h = 0",
+                                                          "BCL_311h - BCL_315h = 0",
+                                                          "BCL_911h - BCL_915h = 0",
+                                                        "BCL_1511h - BCL_1515h = 0",
+                                                         "BML_411h - BML_415h = 0",
+                                                         "BML_511h - BML_515h = 0",
+                                                         "BML_711h - BML_715h = 0",
+                                                         "BML_1011h - BML_1015h = 0",
+                                                         "BML_1311h - BML_1315h = 0",
+                                                         "BML_1411h - BML_1415h = 0",
+                                                         "BML_1611h - BML_1615h = 0",
+                                                         "BML_1911h - BML_1915h = 0",
+                                                         "DNK_1411h - DNK_1415h = 0",
+                                                         "DNK_1711h - DNK_1715h = 0",
+                                                         "DNK_2111h - DNK_2115h = 0",
+                                                         "GB_111h - GB_115h = 0",
+                                                         "GB_211h - GB_215h = 0",
+                                                         "GB_2511h - GB_2515h = 0",
+                                                         "GB_3911h - GB_3915h = 0",
+                                                         "GB_4411h - GB_4415h = 0",
+                                                         "HEH_211h - HEH_215h = 0",
+                                                         #"HEH_411h - HEH_415h = 0",
+                                                         "HEH_911h - HEH_915h = 0",
+                                                         "HEH_1211h - HEH_1215h = 0",
+                                                         "HEH_1611h - HEH_1615h = 0",
+                                                         "HEH_1711h - HEH_1715h = 0",
+                                                         "HEH_2011h - HEH_2015h = 0",
+                                                         "HHR_511h - HHR_515h = 0",
+                                                         "HHR_1711h - HHR_1715h = 0",
+                                                         "HHR_1811h - HHR_1815h = 0",
+                                                         "HUL_211h - HUL_215h = 0",
+                                                         "HUL_311h - HUL_315h = 0",
+                                                         "HUL_411h - HUL_415h = 0",
+                                                         "HUL_511h - HUL_515h = 0",
+                                                         "HUL_611h - HUL_615h = 0",
+                                                         "HUL_1011h - HUL_1015h = 0",
+                                                         "HUL_2011h - HUL_2015h = 0",
+                                                         "LIB_111h - LIB_115h = 0",
+                                                         "LIB_311h - LIB_315h = 0",
+                                                         "LIB_511h - LIB_515h = 0",
+                                                         "LIB_611h - LIB_615h = 0",
+                                                         "LIB_711h - LIB_715h = 0",
+                                                         "LIB_1011h - LIB_1015h = 0",
+                                                         "LIB_1211h - LIB_1215h = 0",
+                                                         "LIB_1311h - LIB_1315h = 0",
+                                                         "OPN_411h - OPN_415h = 0",
+                                                         "OPN_911h - OPN_915h = 0",
+                                                         "OPN_1511h - OPN_1515h = 0",
+                                                         "OPN_1611h - OPN_1615h = 0",
+                                                         "PETL_111h - PETL_115h = 0",
+                                                         "PETL_811h - PETL_815h = 0",
+                                                         "PETL_1411h - PETL_1415h = 0",
+                                                         "SBL_111h - SBL_115h = 0",
+                                                         "SBL_211h - SBL_215h = 0",
+                                                         "SBL_311h - SBL_315h = 0",
+                                                         "SBL_411h - SBL_415h = 0",
+                                                         "SBL_511h - SBL_515h = 0",
+                                                         "SBL_611h - SBL_615h = 0",
+                                                         "SBL_711h - SBL_715h = 0",
+                                                         "SBL_911h - SBL_915h = 0",
+                                                         "SHL_1011h - SHL_1015h = 0",
+                                                         "SHL_1211h - SHL_1215h = 0",
+                                                         "SHL_111h - SHL_115h = 0",
+                                                         "SHL_211h - SHL_215h = 0",
+                                                         "SHL_311h - SHL_315h = 0",
+                                                         "SHL_411h - SHL_415h = 0",
+                                                         "SHL_611h - SHL_615h = 0",
+                                                         "TRT_111h - TRT_115h = 0",
+                                                         "TRT_211h - TRT_215h = 0",
+                                                         "TRT_411h - TRT_415h = 0",
+                                                         "TRT_611h - TRT_615h = 0",
+                                                         "TRT_1111h - TRT_1115h = 0",
+                                                         "WCL_311h - WCL_315h = 0",
+                                                         "WCL_911h - WCL_915h = 0",
+                                                         "WCL_1011h - WCL_1015h = 0",
+                                                         "WCL_1111h - WCL_1115h = 0",
+                                                         "WCL_1311h - WCL_1315h = 0",
+                                                         "WCL_811h - WCL_815h = 0",
+                                                         "WLF_4711h - WLF_4715h = 0",
+                                                         "WLF_6111h - WLF_6115h = 0",
+                                                         "YCN_111h - YCN_115h = 0",
+                                                         "YCN_211h - YCN_215h = 0")))
+summary(cleist_plasticity1.2)
+
+#use merge to add elev data to this dataframe
+elev_cleist <- merge(plastic_cleist, elevdata, by = "Population")
+#linear regression against elevation
+regress_cleist <- ggplot(data = elev_cleist, aes(x=`Elevation (m)`,y=strength))+
+  ggtitle("Pseudocleistogamy plasticity  ")+
+  xlab("Elevation (m)")+
+  ylab("Strength of cleistogamy plasticity")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 1000, label.y = 2.5)+
+  stat_regline_equation(label.x = 1000, label.y = 2, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_cleist)
+ggsave("rcleist.png", plot = regress_cleist, path = "./Elevation/Plasticity", units="in", width=9, height=6, dpi=600)
+#anova leaf lobing as a result of day length and population
+options(contrasts=c("contr.sum", "contr.poly"))
+M2 <- lme(strength ~ Elevation_m + Latitude, na.action = na.omit, random=~1| Population/Line, data = elev_cleist)
+anova(M2, type="marginal")
+par(mfrow=c(1,3))
+plot(fitted(M2), resid(M2, type="normalized"))
+hist(resid(M2,type="normalized"))
+
+####latitude trends####
+#regression by LATITUDE
+regress_cleist_lat <- ggplot(data = elev_cleist, aes(x=`Latitude`,y=strength))+
+  xlab("Latitude")+
+  ylab("Strength of pseudo-cleistogamy plasticity")+
+  ggtitle("Pseudocleistogamy plasticity  ")+
+  stat_smooth(method = "lm", color="black")+
+  geom_point(aes(color = Latitude), size = 5, alpha = 0.7)+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size = 24), 
+        legend.position = "none")+
+  stat_regline_equation(label.x = 36.25, label.y = 1.4)+
+  stat_regline_equation(label.x = 36.25, label.y = 1.2, aes(label = ..rr.label..))+
+  geom_hline(yintercept = 0)
+plot(regress_cleist_lat)
+ggsave("cleist_lat.png", path = "./Latitude/Plastic", plot = regress_cleist_lat, units="in", width=9, height=6, dpi=600)
+```
+
+#Correlation matrices
+```{r plastic-constitutive matrix}
+#combine ALL the datasets. plasticity and KGF data
+#need a common ID across all datasets, like comb
+
+full_plastic_dataset_list <- list(plastic_dtf, plastic_height, plastic_leaf, plastic_leafsize, plastic_width, plastic_length, plastic_l_stamen, plastic_s_stamen, plastic_pistil, plastic_herk, plastic_cleist)
+full_plastic_dataset_list %>% reduce(full_join, by = "comb")
+mg1 <- merge(plastic_dtf, plastic_height, by = "comb")
+mg2 <- merge(mg1, plastic_leaf, by = "comb")
+mg3 <- merge(mg2, plastic_leafsize, by = "comb")
+mg4 <- merge(mg3, plastic_width, by = "comb")
+mg4.5 <- merge(mg4, plastic_length, by = "comb")
+mg5 <- merge(mg4.5, plastic_l_stamen, by = "comb")
+mg6 <- merge(mg5, plastic_s_stamen, by = "comb")
+mg7 <- merge(mg6, plastic_pistil, by = "comb")
+mg8 <- merge(mg7, plastic_herk, by = "comb")
+mg9 <- merge(mg8, plastic_cleist, by = "comb")
+
+plastic_datset <- mg9[,c("comb","strength_dtf","strength_height", "strength_leafshape", "strength_leafsize", "strength_width", "strength_length", "strength_l_stamen", "strength_s_stamen", "strength_pistil", "strength_herk", "strength_cleist")]
+
+#merge them all together
+combined_full <- merge(combined_kgf, plastic_datset, by = "comb")
+combined_full_clean <- combined_full[,c("Leaf Area", "Lobing Ratio", "Days to Flowering", "Flower Width (mm)", "Corolla Length", "Anther", "Stigma", "Height at 1st flower (mm)", "strength_dtf","strength_height", "strength_leafshape", "strength_leafsize", "strength_width", "strength_length", "strength_l_stamen", "strength_s_stamen", "strength_pistil", "strength_herk", "strength_cleist")]
+
+#rename some columns
+names(combined_full_clean)[names(combined_full_clean) == 'Lobing Ratio'] <- 'Leaf Lobing'
+names(combined_full_clean)[names(combined_full_clean) == 'Days to Flowering'] <- 'Flowering Time'
+names(combined_full_clean)[names(combined_full_clean) == 'Flower Width (mm)'] <- 'Corolla Width'
+names(combined_full_clean)[names(combined_full_clean) == 'Stigma'] <- 'Pistil'
+names(combined_full_clean)[names(combined_full_clean) == 'Height at 1st flower (mm)'] <- 'Plant Height'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_dtf'] <- 'Flowering Time (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_height'] <- 'Plant Height (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_leafshape'] <- 'Leaf Lobing (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_leafsize'] <- 'Leaf Area (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_width'] <- 'Corolla Width (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_length'] <- 'Corolla Length (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_l_stamen'] <- 'Long Stamen Length (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_s_stamen'] <- 'Short Stamen Length (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_pistil'] <- 'Pistil Length (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_herk'] <- 'Herkogamy (p)'
+names(combined_full_clean)[names(combined_full_clean) == 'strength_cleist'] <- 'Pseudocleistogamy (p)'
+
+#plastic
+plastic_clean <- subset(plastic_datset, select = -c(comb))
+matrix1 <- cor(plastic_clean, method = "pearson", use = "complete.obs")
+testRes = cor.mtest(plastic_clean, conf.level = 0.95)
+mat1 <- corrplot(matrix1,
+  type = "upper", 
+  method = "color",
+  p.mat = testRes$p, 
+  addgrid.col = 'grey', 
+  addCoef.col = 'black',
+  insig='blank',
+  order = "FPC",
+  tl.col = "black",
+  tl.cex = .8, 
+  cl.cex = .8, 
+  number.cex = .7, 
+  col = COL2('RdYlBu'),
+  plot.new())
+
+#combined
+matrix1 <- cor(combined_full_clean, method = "pearson", use = "complete.obs")
+testRes = cor.mtest(combined_full_clean, conf.level = 0.95)
+
+mat1 <- corrplot(matrix1,
+  type = "upper", 
+  method = "color",
+  p.mat = testRes$p, 
+  addgrid.col = 'grey', 
+  addCoef.col = 'black',
+  insig='blank',
+  tl.col = "black",
+  tl.cex = .8, 
+  cl.cex = .8, 
+  number.cex = .7, 
+  col = COL2('RdYlBu'),
+  plot.new())
+
+```
+```{r Davis-Tulane 15h matrix}
+#filter 15h plasticity data and combine with KGF full dataset by comb
+Long_Tulane <- filter(full_dataset, `Day length` == "15h")
+Long_Tulane['Chamber']='Tulane'
+Long_Tulane_clean <- Long_Tulane[,c("comb", "Chamber", "Leaf area (px)", "Leaf lobing index", "Days to flowering", "Plant Height (mm)", "Corolla Length (mm)", "Corolla Width (mm)", "Longest Stamen Length (mm)", "Pistil Length (mm)", "Stigma-anther separation")]
+combined_kgf_clean <- combined_kgf[,c("comb", "Leaf Area", "Lobing Ratio", "Days to Flowering", "Flower Width (mm)", "Corolla Length", "Anther", "Stigma", "Height at 1st flower (mm)")]
+combined_kgf_clean['Chamber']='Davis'
+
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Leaf Area'] <- 'Leaf area (px)'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Days to Flowering'] <- 'Days to flowering'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Lobing Ratio'] <- 'Leaf lobing index'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Flower Width (mm)'] <- 'Corolla Width (mm)'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Corolla Length'] <- 'Corolla Length (mm)'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Stigma'] <- 'Pistil Length (mm)'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Anther'] <- 'Stamen Length (mm)'
+names(combined_kgf_clean)[names(combined_kgf_clean) == 'Height at 1st flower (mm)'] <- 'Plant Height (mm)'
+
+long_combined <- plyr::join(Long_Tulane_clean,combined_kgf_clean, type = "full")
+
+# Sort by group then ID
+long_combined <- long_combined[, c(2,1,3,4,5,6,7,8,9,10,11,12)]
+
+t.test(`Leaf lobing index` ~ Chamber, long_combined, paired=TRUE)
+
+```
